@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>Ganesha</title>
+<meta name="theme-color" content="#3E6A52" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<style>
+  :root{
+    --paper:#EEF0E7; --card:#FBFAF5; --ink:#202A22; --ink-soft:#5B6155;
+    --weekday:#3E6A52; --weekday-bg:#E3EBE3; --weekend:#AE522F; --weekend-bg:#F1E1D6;
+    --gold:#B98A2E; --line:#D9DACB; --wrong:#B0342A; --wrong-bg:#F3DBD7;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--paper); }
+  body{
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color:var(--ink);
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #app{ max-width:520px; margin:0 auto; padding:1.25rem 1rem 2rem; }
+  .serif{ font-family: Georgia, 'Iowan Old Style', serif; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; }
+  .btn{ border:1px solid var(--line); background:var(--card); border-radius:8px; padding:7px 12px; font-size:12px; cursor:pointer; color:var(--ink); }
+  .btn:disabled{ color:var(--line); cursor:default; }
+  input[type=text], input[type=password], input[type=date]{
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; background:#fff; color:var(--ink); outline:none; width:100%;
+  }
+  ::-webkit-scrollbar{ height:0; width:0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="app.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
