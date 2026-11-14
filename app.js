@@ -775,9 +775,10 @@ let S = {
   habits: LS.get("streko_habits", { weekday: DEFAULT_WEEKDAY_HABITS, weekend: DEFAULT_WEEKEND_HABITS }),
   logs: LS.get("streko_logs", {}),
   thoughts: LS.get("streko_thoughts", {}),
+  dayModes: LS.get("streko_day_modes", {}),        // { "YYYY-MM-DD": "custom" } — missing means Default
+  customTasks: LS.get("streko_custom_tasks", {}),  // { "YYYY-MM-DD": [{id,name}] } — each Custom day has its own list
   editMode: false,
   viewDateKey: null,
-  manualType: null,
   editingHabitId: null,
   viewMonth: { year: today.getFullYear(), month: today.getMonth() },
 };
@@ -786,6 +787,13 @@ LS.del("streko_pin"); // PIN lock feature removed — clear any previously saved
 /* Mon-Fri use the weekday schedule; Sat + Sun both use the weekend schedule (no college on Saturday). */
 function getDayType(d){
   return isWeekendDate(d) ? "weekend" : "weekday";
+}
+/* Each day is either "default" (auto weekday/weekend list) or "custom" (its own task list).
+   Choosing Custom locks that day; every day starts as Default. */
+function getDayMode(key){ return S.dayModes[key] === "custom" ? "custom" : "default"; }
+function getTasksFor(key){
+  if(getDayMode(key) === "custom") return S.customTasks[key] || [];
+  return S.habits[getDayType(keyToDate(key))];
 }
 
 /* Draws a thought index without repeats until the whole pool has been used once,
@@ -825,33 +833,13 @@ if (LS.get("streko_schedule_version", 1) < SCHEDULE_VERSION) {
 
 function saveHabits(){ LS.set("streko_habits", S.habits); }
 function saveLogs(){ LS.set("streko_logs", S.logs); }
+function saveDayModes(){ LS.set("streko_day_modes", S.dayModes); }
+function saveCustomTasks(){ LS.set("streko_custom_tasks", S.customTasks); }
 
 /* ---------- derived getters ---------- */
 function getViewDate(){ return S.viewDateKey ? keyToDate(S.viewDateKey) : today; }
 function getViewKey(){ return S.viewDateKey || todayKey; }
 function isViewingToday(){ return getViewKey() === todayKey; }
-function getComputedType(){ const vd=getViewDate(); return S.manualType || getDayType(vd); }
-
-function streakFor(habit, type){
-  let count = 0;
-  let cursor = new Date(today);
-  let iter = 0;
-  while(iter < 3660){
-    iter++;
-    if(getDayType(cursor) === type){
-      const key = dateKey(cursor);
-      const done = !!(S.logs[key] && S.logs[key][habit.id]);
-      if(done){
-        count++;
-      } else if(key !== todayKey){
-        break; // a genuinely missed past scheduled day ends the streak
-      }
-      // if it's today and not done yet, skip it (day isn't over) without breaking or counting
-    }
-    cursor = addDays(cursor, -1);
-  }
-  return count;
-}
 
 /* ---------- actions ---------- */
 function toggleHabit(key, habitId){
@@ -861,18 +849,29 @@ function toggleHabit(key, habitId){
   saveLogs();
   render();
 }
-function addHabit(type){
+/* list = "weekday" | "weekend" (the Default lists) or "custom" (the viewed day's own list) */
+function updateList(list, fn){
+  if(list === "custom"){
+    const key = getViewKey();
+    S.customTasks = { ...S.customTasks, [key]: fn(S.customTasks[key] || []) };
+    saveCustomTasks();
+  } else {
+    S.habits = { ...S.habits, [list]: fn(S.habits[list]) };
+    saveHabits();
+  }
+}
+function addHabit(list){
   const input = document.getElementById("new-habit-input");
   const name = input ? input.value.trim() : "";
   if(!name) return;
-  const id = `${type}-${Date.now()}`;
-  S.habits = { ...S.habits, [type]: [...S.habits[type], { id, name }] };
-  saveHabits();
+  const id = `${list}-${Date.now()}`;
+  updateList(list, arr => [...arr, { id, name }]);
   render();
+  const again = document.getElementById("new-habit-input");
+  if(again) again.focus();
 }
-function removeHabit(type, id){
-  S.habits = { ...S.habits, [type]: S.habits[type].filter(h=>h.id!==id) };
-  saveHabits();
+function removeHabit(list, id){
+  updateList(list, arr => arr.filter(h=>h.id!==id));
   render();
 }
 function startEditing(id){ S.editingHabitId = id; render(); }
@@ -880,19 +879,27 @@ function commitEdit(type, id){
   const input = document.getElementById(`edit-input-${id}`);
   const trimmed = input ? input.value.trim() : "";
   if(trimmed){
-    S.habits = { ...S.habits, [type]: S.habits[type].map(h=> h.id===id ? {...h, name:trimmed} : h) };
-    saveHabits();
+    updateList(type, arr => arr.map(h=> h.id===id ? {...h, name:trimmed} : h));
   }
   S.editingHabitId = null;
   render();
 }
 function cancelEdit(){ S.editingHabitId = null; render(); }
-function setManualType(t){ S.manualType = t; render(); }
+function chooseCustomToday(){
+  if(getDayMode(todayKey) === "custom") return;
+  if(!confirm("Switch today to Custom?\n\nToday will be locked as a Custom day — you can't switch back to Default.")) return;
+  S.dayModes = { ...S.dayModes, [todayKey]: "custom" };
+  saveDayModes();
+  S.editMode = false;
+  render();
+  const el = document.getElementById("new-habit-input");
+  if(el) el.focus();
+}
 function toggleEditMode(){ S.editMode = !S.editMode; S.editingHabitId=null; render(); }
-function goToDateKey(key){ S.viewDateKey = key; S.manualType = null; render(); }
+function goToDateKey(key){ S.viewDateKey = key; S.editingHabitId = null; render(); }
 function goPrevDay(){ goToDateKey(dateKey(addDays(getViewDate(),-1))); }
 function goNextDay(){ goToDateKey(dateKey(addDays(getViewDate(),1))); }
-function goToday(){ S.viewDateKey=null; S.manualType=null; render(); }
+function goToday(){ S.viewDateKey=null; S.editingHabitId = null; render(); }
 function onDateInputChange(val){ if(val) goToDateKey(val); }
 function prevMonth(){ S.viewMonth = S.viewMonth.month===0 ? {year:S.viewMonth.year-1, month:11} : {year:S.viewMonth.year, month:S.viewMonth.month-1}; render(); }
 function nextMonth(){
@@ -986,17 +993,14 @@ function render(){
 }
 
 function renderMain(){
-  const todayIsWeekend = getDayType(today) === "weekend";
-  const activeType = todayIsWeekend ? "weekend" : "weekday";
-  const activeHabits = S.habits[activeType];
-  const doneCount = activeHabits.filter(h => S.logs[todayKey] && S.logs[todayKey][h.id]).length;
-  const totalCount = activeHabits.length;
-  const pct = totalCount ? Math.round((doneCount/totalCount)*100) : 0;
+  const todayIsCustom = getDayMode(todayKey) === "custom";
 
   const viewDate = getViewDate();
   const viewKey = getViewKey();
-  const computedType = getComputedType();
-  const viewHabits = S.habits[computedType];
+  const viewIsCustom = getDayMode(viewKey) === "custom";
+  /* which list the add/rename/remove actions target for the viewed day */
+  const listId = viewIsCustom ? "custom" : getDayType(viewDate);
+  const viewHabits = getTasksFor(viewKey);
   const viewDone = viewHabits.filter(h => S.logs[viewKey] && S.logs[viewKey][h.id]).length;
   const viewTotal = viewHabits.length;
   const viewPct = viewTotal ? Math.round((viewDone/viewTotal)*100) : 0;
@@ -1016,18 +1020,18 @@ function renderMain(){
   for(let day=1; day<=dim; day++){
     const d = new Date(S.viewMonth.year, S.viewMonth.month, day); d.setHours(0,0,0,0);
     const future = d > today;
-    const wknd = getDayType(d) === "weekend";
-    const set = wknd ? S.habits.weekend : S.habits.weekday;
     const key = dateKey(d);
+    const isCustomDay = getDayMode(key) === "custom";
+    const set = getTasksFor(key);
     const log = S.logs[key] || {};
     const doneN = set.filter(h=>log[h.id]).length;
     const totalN = set.length;
     const dp = totalN ? Math.round((doneN/totalN)*100) : 0;
-    chartPts.push({ key, day, dp, future, label: `${d.toLocaleDateString("en-US",{weekday:"short", day:"numeric", month:"short"})} · ${dp}%` });
+    chartPts.push({ key, day, dp, future, label: `${d.toLocaleDateString("en-US",{weekday:"short", day:"numeric", month:"short"})} · ${isCustomDay?"Custom":"Default"} · ${dp}%` });
     const x = cx(day-1), y = cy(dp);
     if(!future){
       linePts += `${x.toFixed(1)},${y.toFixed(1)} `;
-      const color = wknd ? "var(--weekend)" : "var(--weekday)";
+      const color = isCustomDay ? "var(--weekend)" : "var(--weekday)";
       const isToday = key===todayKey;
       dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${isToday?4:2.6}" style="fill:${color};"/>`;
       if(key===viewKey) dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6.5" style="fill:none;stroke:var(--gold);stroke-width:2;"/>`;
@@ -1056,14 +1060,17 @@ function renderMain(){
       <rect x="0" y="0" width="${CW}" height="${CH}" style="fill:transparent;cursor:pointer;"
             onpointerdown="chartDown(event)" onpointermove="chartMove(event)" onpointerup="chartUp(event)" onpointercancel="chartCancel(event)"/>
     </svg>
-    <div id="chart-readout" style="min-height:15px;margin-top:2px;text-align:center;font-size:11px;color:var(--ink-soft);"></div>`;
+    <div id="chart-readout" style="min-height:15px;margin-top:2px;text-align:center;font-size:11px;color:var(--ink-soft);"></div>
+    <div style="display:flex;justify-content:center;gap:14px;font-size:10px;color:var(--ink-soft);margin-top:2px;">
+      <span><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--weekday);margin-right:4px;"></span>Default</span>
+      <span><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--weekend);margin-right:4px;"></span>Custom</span>
+    </div>`;
 
   let habitRows = "";
   const dayLocked = !isViewingToday();
   viewHabits.forEach((h, i) => {
     const done = !!(S.logs[viewKey] && S.logs[viewKey][h.id]);
     const wrong = dayLocked && !done;
-    const streak = streakFor(h, computedType);
     const isEditingThis = S.editingHabitId === h.id;
     const rowBackground = wrong ? "var(--wrong-bg)" : (done ? "var(--done-bg)" : "transparent");
     const boxBorder = wrong ? "var(--wrong)" : (done ? "var(--done)" : "var(--line)");
@@ -1081,18 +1088,15 @@ function renderMain(){
         </div>
         ${isEditingThis ? `
           <input id="edit-input-${h.id}" type="text" value="${esc(h.name)}"
-            onkeydown="if(event.key==='Enter'){commitEdit('${computedType}','${h.id}')} if(event.key==='Escape'){cancelEdit()}"
-            onblur="commitEdit('${computedType}','${h.id}')"
+            onkeydown="if(event.key==='Enter'){commitEdit('${listId}','${h.id}')} if(event.key==='Escape'){cancelEdit()}"
+            onblur="commitEdit('${listId}','${h.id}')"
             style="flex:1;font-size:14px;border:1px solid var(--gold);border-radius:6px;padding:4px 8px;" />
         ` : `
           <div ${labelAttr} style="flex:1;font-size:14px;${labelCursor}${labelColor}">${esc(h.name)}</div>
         `}
-        ${!isEditingThis ? `
-          <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--gold);font-family:ui-monospace,monospace;">🔥${streak}</div>
-        ` : ""}
-        ${S.editMode && !isEditingThis ? `
+        ${(S.editMode || (viewIsCustom && !dayLocked)) && !isEditingThis ? `
           <span onclick="startEditing('${h.id}')" style="cursor:pointer;color:var(--ink-soft);">✏️</span>
-          <span onclick="removeHabit('${computedType}','${h.id}')" style="cursor:pointer;color:var(--ink-soft);">✕</span>
+          <span onclick="removeHabit('${listId}','${h.id}')" style="cursor:pointer;color:var(--ink-soft);">✕</span>
         ` : ""}
       </div>`;
   });
@@ -1103,8 +1107,8 @@ function renderMain(){
         <div class="serif" style="font-size:26px;font-style:italic;">Ganesha</div>
         <div style="font-size:13px;color:var(--ink-soft);margin-top:2px;">${dateLabel}</div>
       </div>
-      <div style="background:${todayIsWeekend?"var(--weekend-bg)":"var(--weekday-bg)"};color:${todayIsWeekend?"var(--weekend)":"var(--weekday)"};padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;text-transform:uppercase;">
-        ${todayIsWeekend?"Weekend format":"Weekday format"}
+      <div style="background:${todayIsCustom?"var(--weekend-bg)":"var(--weekday-bg)"};color:${todayIsCustom?"var(--weekend)":"var(--weekday)"};padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;text-transform:uppercase;">
+        ${todayIsCustom?"Custom day":"Default day"}
       </div>
     </div>
 
@@ -1120,7 +1124,7 @@ function renderMain(){
       ${lineChart}
     </div>
 
-    <div class="card" style="padding:14px 18px;margin-bottom:16px;text-align:center;font-size:15px;font-weight:600;letter-spacing:0.3px;color:${todayIsWeekend?"var(--weekend)":"var(--weekday)"};">
+    <div class="card" style="padding:14px 18px;margin-bottom:16px;text-align:center;font-size:15px;font-weight:600;letter-spacing:0.3px;color:${todayIsCustom?"var(--weekend)":"var(--weekday)"};">
       Be Serious - No excuses - Stay Focused
     </div>
 
@@ -1131,9 +1135,9 @@ function renderMain(){
 
     <div>
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-        <div class="card" style="display:flex;gap:4px;padding:3px;">
-          <button onclick="setManualType('weekday')" style="border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;background:${computedType==="weekday"?"var(--weekday-bg)":"transparent"};color:${computedType==="weekday"?"var(--weekday)":"var(--ink-soft)"};">Weekday</button>
-          <button onclick="setManualType('weekend')" style="border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;background:${computedType==="weekend"?"var(--weekend-bg)":"transparent"};color:${computedType==="weekend"?"var(--weekend)":"var(--ink-soft)"};">Weekend</button>
+        <div class="card" style="display:flex;gap:4px;padding:3px;align-items:center;">
+          <button ${(!dayLocked && !viewIsCustom) ? "" : "disabled"} style="border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:default;background:${!viewIsCustom?"var(--weekday-bg)":"transparent"};color:${!viewIsCustom?"var(--weekday)":"var(--line)"};">${(!viewIsCustom && dayLocked)?"🔒 ":""}Default</button>
+          <button ${(!dayLocked && !viewIsCustom) ? `onclick="chooseCustomToday()"` : "disabled"} style="border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:${(!dayLocked && !viewIsCustom)?"pointer":"default"};background:${viewIsCustom?"var(--weekend-bg)":"transparent"};color:${viewIsCustom?"var(--weekend)":((!dayLocked)?"var(--ink-soft)":"var(--line)")};">${viewIsCustom?"🔒 ":""}Custom</button>
         </div>
         <button class="btn" onclick="toggleEditMode()" style="${S.editMode?"border-color:var(--gold);background:#F3E8CE;color:#7A5A17;":""}font-weight:600;">✏️ ${S.editMode?"Editing habits: on":"Editing habits: off"}</button>
       </div>
@@ -1154,13 +1158,13 @@ function renderMain(){
       </div>
 
       <div class="card" style="overflow:hidden;">
-        ${habitRows}
+        ${habitRows || `<div style="padding:16px;font-size:13px;color:var(--ink-soft);text-align:center;">${(viewIsCustom && !dayLocked) ? "Custom day — add today's tasks below with ＋" : "No tasks for this day"}</div>`}
       </div>
 
-      ${S.editMode ? `
+      ${(S.editMode || (viewIsCustom && !dayLocked)) ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
-          <input id="new-habit-input" type="text" placeholder="Add a ${computedType} habit" onkeydown="if(event.key==='Enter'){addHabit('${computedType}')}" />
-          <button class="btn" onclick="addHabit('${computedType}')" style="flex-shrink:0;">＋</button>
+          <input id="new-habit-input" type="text" placeholder="${viewIsCustom ? "Add a task for today" : `Add a Default habit (${getDayType(viewDate)} list)`}" onkeydown="if(event.key==='Enter'){addHabit('${listId}')}" />
+          <button class="btn" onclick="addHabit('${listId}')" style="flex-shrink:0;">＋</button>
         </div>
       ` : ""}
     </div>
